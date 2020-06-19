@@ -5,6 +5,7 @@
 #include <locale.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <libgen.h>
@@ -673,12 +674,36 @@ setsel(char *str, Time t)
 	XSetSelectionOwner(xw.dpy, XA_PRIMARY, xw.win, t);
 	if (XGetSelectionOwner(xw.dpy, XA_PRIMARY) != xw.win)
 		selclear();
+	clipcopy(NULL);
 }
 
 void
 xsetsel(char *str)
 {
 	setsel(str, CurrentTime);
+}
+
+void
+plumb(char *sel) {
+	if (sel == NULL)
+		return;
+	char cwd[PATH_MAX];
+	pid_t child;
+	if (subprocwd(cwd) != 0)
+		return;
+
+	switch(child = fork()) {
+		case -1:
+			return;
+		case 0:
+			if (chdir(cwd) != 0)
+				exit(1);
+			if (execvp(plumb_cmd, (char *const []){plumb_cmd, sel, 0}) == -1)
+				exit(1);
+			exit(0);
+		default:
+			waitpid(child, NULL, 0);
+	}
 }
 
 void
@@ -693,6 +718,8 @@ brelease(XEvent *e)
 		return;
 	if (e->xbutton.button == Button1)
 		mousesel(e, 1);
+	else if (e->xbutton.button == Button3)
+		plumb(xsel.primary);
 }
 
 void
@@ -1380,10 +1407,6 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 	} else {
 		bg = &dc.col[base.bg];
 	}
-
-	/* Change basic system colors [0-7] to bright system colors [8-15] */
-	if ((base.mode & ATTR_BOLD_FAINT) == ATTR_BOLD && BETWEEN(base.fg, 0, 7))
-		fg = &dc.col[base.fg + 8];
 
 	if (IS_SET(MODE_REVERSE)) {
 		if (fg == &dc.col[defaultfg]) {
